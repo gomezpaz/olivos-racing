@@ -56,9 +56,113 @@ export function buildWorld(scene, data, proj, { tilesMode = false } = {}) {
       mesh.receiveShadow = true;
       world.add(mesh);
     }
+
+    // white center lines on avenues
+    const lineGeos = [];
+    for (const road of data.roads) {
+      if (road.w < 9) continue;
+      const pts = road.p.map(([la, lo]) => proj.toWorld(la, lo));
+      const g = ribbonGeometry(pts, 0.16, 0.04);
+      if (g) lineGeos.push(g);
+    }
+    if (lineGeos.length) {
+      world.add(new THREE.Mesh(mergeGeometries(lineGeos),
+        new THREE.MeshBasicMaterial({ color: 0xc9c9c9 })));
+    }
+
+    addTrees(world, data, proj);
+    addRiver(world, data, proj);
   }
 
   return { group: world, colliders };
+}
+
+// Street trees along road edges (instanced), skipping anything near the circuit.
+function addTrees(world, data, proj) {
+  const trackCells = new Set();
+  const CELL = 16;
+  for (const [la, lo] of data.tracks[0].path) {
+    const p = proj.toWorld(la, lo);
+    trackCells.add(`${Math.floor(p.x / CELL)},${Math.floor(p.z / CELL)}`);
+  }
+  const nearTrack = (x, z) => {
+    const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++)
+      if (trackCells.has(`${cx + i},${cz + j}`)) return true;
+    return false;
+  };
+
+  let seed = 1234;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const spots = [];
+  outer:
+  for (const road of data.roads) {
+    const pts = road.p.map(([la, lo]) => proj.toWorld(la, lo));
+    let acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+      acc += segLen;
+      if (acc < 18) continue;
+      acc = 0;
+      const dx = (b.x - a.x) / (segLen || 1), dz = (b.z - a.z) / (segLen || 1);
+      for (const side of [-1, 1]) {
+        if (rand() < 0.5) continue;
+        const off = road.w / 2 + 2 + rand() * 3;
+        const x = b.x - dz * off * side, z = b.z + dx * off * side;
+        if (nearTrack(x, z)) continue;
+        spots.push({ x, z, s: 0.75 + rand() * 0.7, r: rand() * Math.PI });
+        if (spots.length >= 1500) break outer;
+      }
+    }
+  }
+
+  const trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 2.4, 6);
+  trunkGeo.translate(0, 1.2, 0);
+  const canopyGeo = new THREE.IcosahedronGeometry(2.0, 1);
+  canopyGeo.scale(1, 1.15, 1);
+  canopyGeo.translate(0, 3.6, 0);
+  const trunks = new THREE.InstancedMesh(trunkGeo,
+    new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 1 }), spots.length);
+  const canopies = new THREE.InstancedMesh(canopyGeo,
+    new THREE.MeshStandardMaterial({ roughness: 0.95 }), spots.length);
+  const m = new THREE.Matrix4();
+  const c = new THREE.Color();
+  for (let i = 0; i < spots.length; i++) {
+    const s = spots[i];
+    m.makeRotationY(s.r).scale(new THREE.Vector3(s.s, s.s, s.s)).setPosition(s.x, 0, s.z);
+    trunks.setMatrixAt(i, m);
+    canopies.setMatrixAt(i, m);
+    canopies.setColorAt(i, c.setHSL(0.27 + (i % 7) * 0.008, 0.45, 0.22 + (i % 5) * 0.02));
+  }
+  canopies.castShadow = true;
+  world.add(trunks, canopies);
+}
+
+// Río de la Plata — the brown river NE of Av. del Libertador.
+function addRiver(world, data, proj) {
+  const path = data.tracks[0].path;
+  const a = proj.toWorld(path[0][0], path[0][1]);
+  const b = proj.toWorld(path[30][0], path[30][1]);
+  let dx = b.x - a.x, dz = b.z - a.z;
+  const len = Math.hypot(dx, dz) || 1;
+  dx /= len; dz /= len;
+  let px = -dz, pz = dx;
+  if (px < 0) { px = -px; pz = -pz; } // perpendicular pointing east(ish) = toward the river
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(5000, 2400),
+    new THREE.MeshStandardMaterial({ color: 0x6e6047, roughness: 0.25, metalness: 0.35 }));
+  water.rotation.x = -Math.PI / 2;
+  water.rotation.z = -Math.atan2(dz, dx);
+  water.position.set(a.x + px * 1900, -0.4, a.z + pz * 1900);
+  world.add(water);
+  // costanera strip between city and water
+  const sand = new THREE.Mesh(
+    new THREE.PlaneGeometry(5000, 260),
+    new THREE.MeshStandardMaterial({ color: 0x9b8f74, roughness: 1 }));
+  sand.rotation.copy(water.rotation);
+  sand.position.set(a.x + px * 640, -0.15, a.z + pz * 640);
+  world.add(sand);
 }
 
 export function buildCircuitDressing(scene, trackPts, { tilesMode = false } = {}) {

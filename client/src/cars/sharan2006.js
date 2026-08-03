@@ -4,8 +4,10 @@ import * as THREE from 'three';
 // Built facing +Z, dimensions ~4.62 x 1.81 x 1.73 m.
 export function buildSharan({ color = 0x9a9da0 } = {}) {
   const group = new THREE.Group();
-  const body = new THREE.MeshStandardMaterial({ color, metalness: 0.65, roughness: 0.38 });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x141c22, metalness: 0.9, roughness: 0.08 });
+  const body = new THREE.MeshPhysicalMaterial({
+    color, metalness: 0.85, roughness: 0.32, clearcoat: 1.0, clearcoatRoughness: 0.06,
+  });
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x141c22, metalness: 0.2, roughness: 0.03, clearcoat: 1.0 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x1c1d1f, metalness: 0.2, roughness: 0.8 });
   const chrome = new THREE.MeshStandardMaterial({ color: 0xcfd3d6, metalness: 0.95, roughness: 0.15 });
 
@@ -90,5 +92,31 @@ export function buildSharan({ color = 0x9a9da0 } = {}) {
     group.add(rail);
   }
 
+  // soft contact shadow (helps ground the car in both render modes)
+  const shadowTex = makeShadowTexture();
+  const blob = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 5.2),
+    new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
+  blob.rotation.x = -Math.PI / 2;
+  blob.position.y = 0.02;
+  blob.renderOrder = 1;
+  group.add(blob);
+
   return { group, wheels, wheelRadius: 0.335 };
+}
+
+let _shadowTex = null;
+function makeShadowTexture() {
+  if (_shadowTex) return _shadowTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 8, 64, 64, 62);
+  g.addColorStop(0, 'rgba(0,0,0,0.85)');
+  g.addColorStop(0.7, 'rgba(0,0,0,0.35)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  _shadowTex = new THREE.CanvasTexture(c);
+  return _shadowTex;
 }

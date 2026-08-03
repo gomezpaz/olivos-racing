@@ -71,11 +71,18 @@ async function startGame(playerName, room, carId, apiKey) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x9fc4e8);
-  scene.fog = new THREE.Fog(0x9fc4e8, 400, 1600);
+  scene.fog = new THREE.Fog(0xcfe2f3, 500, 2200);
+
+  // image-based lighting so car paint has real reflections
+  const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.55;
 
   const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.5, 6000);
   addEventListener('resize', () => {
@@ -84,14 +91,27 @@ async function startGame(playerName, room, carId, apiKey) {
     renderer.setSize(innerWidth, innerHeight);
   });
 
-  const sun = new THREE.DirectionalLight(0xfff2df, 2.6);
-  sun.position.set(120, 180, -80);
+  // late-afternoon sun over the river
+  const { Sky } = await import('three/addons/objects/Sky.js');
+  const sky = new Sky();
+  sky.scale.setScalar(45000);
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(62), THREE.MathUtils.degToRad(35));
+  sky.material.uniforms.turbidity.value = 6;
+  sky.material.uniforms.rayleigh.value = 1.8;
+  sky.material.uniforms.mieCoefficient.value = 0.004;
+  sky.material.uniforms.mieDirectionalG.value = 0.85;
+  sky.material.uniforms.sunPosition.value.copy(sunDir);
+  scene.add(sky);
+
+  const sun = new THREE.DirectionalLight(0xffe8c8, 3.1);
+  sun.position.copy(sunDir).multiplyScalar(250);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
-  sun.shadow.camera.top = 60; sun.shadow.camera.bottom = -60;
+  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.camera.left = -90; sun.shadow.camera.right = 90;
+  sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90;
+  sun.shadow.bias = -0.0004;
   scene.add(sun, sun.target);
-  scene.add(new THREE.HemisphereLight(0xbfd7f0, 0x54503e, 1.1));
+  scene.add(new THREE.HemisphereLight(0xbfd7f0, 0x54503e, 0.75));
 
   const proj = makeProjector(mapData.origin);
   const trackData = mapData.tracks[0];
@@ -280,7 +300,7 @@ async function startGame(playerName, room, carId, apiKey) {
     camera.lookAt(car.pos.x + fwd.x * 6, car.pos.y + 1.2, car.pos.z + fwd.z * 6);
 
     // sun follows car for shadow coverage
-    sun.position.set(car.pos.x + 120, 180, car.pos.z - 80);
+    sun.position.copy(car.pos).addScaledVector(sunDir, 250);
     sun.target.position.copy(car.pos);
 
     if (tilesCtl) tilesCtl.update();
