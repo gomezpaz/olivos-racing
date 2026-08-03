@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import mapData from './data/olivos.json';
 import { makeProjector } from './geo.js';
 import { buildWorld, buildCircuitDressing } from './world.js';
-import { initTiles, fetchApiKey } from './tiles.js';
+import { initTiles, fetchApiKey, probeTiles } from './tiles.js';
 import { Car, RemoteCar } from './car.js';
 import { Track } from './track.js';
 import { Net } from './net.js';
@@ -11,7 +11,16 @@ import { CARS } from './cars/index.js';
 
 const $ = (id) => document.getElementById(id);
 
+// diagnostic mode: /?probe=1 exercises tile loading without WebGL
+const PROBING = !!new URLSearchParams(location.search).get('probe');
+if (PROBING) {
+  document.body.style.cssText = 'color:#0f0;background:#000;font:12px monospace;overflow:auto';
+  document.querySelectorAll('.overlay,#hud').forEach((el) => el.remove());
+  fetchApiKey().then((k) => probeTiles(mapData.origin, k));
+}
+
 // ---------- menu ----------
+if (!PROBING) {
 const nameInput = $('name-input');
 const roomInput = $('room-input');
 nameInput.value = localStorage.getItem('playerName') || '';
@@ -63,32 +72,41 @@ $('play-btn').onclick = async () => {
   $('hud').classList.remove('hidden');
   startGame(name, room, selectedCar, await apiKeyPromise);
 };
+} // end !PROBING
 
 // ---------- game ----------
 async function startGame(playerName, room, carId, apiKey) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
-  document.body.appendChild(renderer.domElement);
+  // renderer is optional: headless QA drives the full game sim without WebGL
+  let renderer = null;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+  } catch (e) {
+    console.warn('WebGL unavailable — running simulation-only', e);
+  }
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0xcfe2f3, 500, 2200);
 
-  // image-based lighting so car paint has real reflections
-  const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.55;
+  if (renderer) {
+    // image-based lighting so car paint has real reflections
+    const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.55;
+  }
 
   const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.5, 6000);
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+    if (renderer) renderer.setSize(innerWidth, innerHeight);
   });
 
   // late-afternoon sun over the river
@@ -132,6 +150,10 @@ async function startGame(playerName, room, carId, apiKey) {
   const car = new Car(carId, scene);
   const spawn = track.spawnPose(0);
   car.place(spawn.x, spawn.z, spawn.yaw);
+  // photorealistic terrain streams in async — hold the car until the ground exists
+  let awaitingTerrain = tilesMode;
+  let terrainWaitMs = 0;
+  if (awaitingTerrain) car.frozen = true;
 
   const input = new Input();
   input.onAction('KeyR', () => {
@@ -253,6 +275,16 @@ async function startGame(playerName, room, carId, apiKey) {
       `<div class="p ${m.me ? 'me' : ''}"><span>${m.name}</span><span>${race.phase === 'racing' || race.phase === 'countdown' ? 'V' + (m.lap || 0) : ''}</span></div>`).join('');
   }
 
+  // ---------- debug overlay (?debug=1, auto-on in simulation-only mode) ----------
+  const debugMode = !!new URLSearchParams(location.search).get('debug') || !renderer;
+  let debugEl = null, debugAcc = 0;
+  if (debugMode) {
+    debugEl = document.createElement('div');
+    debugEl.id = 'debug-overlay';
+    debugEl.style.cssText = 'position:fixed;top:70px;left:12px;z-index:99;background:rgba(0,0,0,0.7);color:#7fff7f;font:11px monospace;padding:8px;border-radius:6px;white-space:pre';
+    document.body.appendChild(debugEl);
+  }
+
   // ---------- loop ----------
   const clock = new THREE.Clock();
   let sendAcc = 0, cpAcc = 0;
@@ -269,6 +301,26 @@ async function startGame(playerName, room, carId, apiKey) {
       const left = Math.max(0, (race.startAt - Date.now()) / 1000);
       $('center-msg').textContent = left > 0.05 ? Math.ceil(left) : '';
       if (Date.now() >= race.startAt && !localRacing) beginRacing();
+    }
+
+    // wait for streamed terrain before releasing the car (photorealistic mode)
+    if (awaitingTerrain) {
+      terrainWaitMs += dt * 1000;
+      const gy = tilesCtl.groundHeight(spawn.x, spawn.z);
+      if (gy != null) {
+        awaitingTerrain = false;
+        car.frozen = false;
+        car.groundY = gy;
+        car.place(spawn.x, spawn.z, spawn.yaw, () => gy);
+        $('loading-note').classList.add('hidden');
+      } else if (terrainWaitMs > 25000) {
+        awaitingTerrain = false;
+        car.frozen = false;
+        toast('El terreno no cargó — revisá la consola (F12)');
+      } else {
+        $('loading-note').classList.remove('hidden');
+        $('loading-note').textContent = 'Cargando Olivos… (Google Earth 3D)';
+      }
     }
 
     car.update(dt, input.read(), groundHeight);
@@ -315,6 +367,18 @@ async function startGame(playerName, room, carId, apiKey) {
 
     if (tilesCtl) tilesCtl.update();
 
+    if (debugEl && (debugAcc += dt) > 0.5) {
+      debugAcc = 0;
+      const gy = tilesMode ? tilesCtl.groundHeight(car.pos.x, car.pos.z) : 0;
+      const t = tilesCtl?.tiles;
+      debugEl.textContent =
+        `tilesMode=${tilesMode} renderer=${!!renderer}\n` +
+        `loadProgress=${t ? t.loadProgress?.toFixed(3) : '-'} tilesInGroup=${t ? t.group.children.length : '-'}\n` +
+        `car=(${car.pos.x.toFixed(1)}, ${car.pos.y.toFixed(1)}, ${car.pos.z.toFixed(1)}) yaw=${car.yaw.toFixed(2)}\n` +
+        `groundRaycast=${gy == null ? 'NULL' : gy.toFixed(2)} awaitingTerrain=${awaitingTerrain}\n` +
+        `tilesYaw=${tilesCtl ? tilesCtl.wrapper.rotation.y.toFixed(3) : '-'} tilesH=${tilesCtl ? tilesCtl.wrapper.position.y.toFixed(1) : '-'}`;
+    }
+
     // HUD
     const kmh = Math.round(car.speed * 3.6);
     $('speedo').firstElementChild.textContent = kmh;
@@ -346,7 +410,8 @@ async function startGame(playerName, room, carId, apiKey) {
       }
     }
 
-    renderer.render(scene, camera);
+    if (renderer) renderer.render(scene, camera);
+    else scene.updateMatrixWorld(true); // sim mode: render normally does this
   }
   frame();
 }

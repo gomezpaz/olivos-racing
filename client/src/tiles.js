@@ -37,7 +37,8 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
   });
 
   tiles.setCamera(camera);
-  tiles.setResolutionFromRenderer(camera, renderer);
+  if (renderer) tiles.setResolutionFromRenderer(camera, renderer);
+  else tiles.setResolution(camera, 1920, 1080);
   tiles.errorTarget = 8;
   if (tiles.lruCache) tiles.lruCache.maxBytesSize = 512 * 1024 * 1024;
 
@@ -65,9 +66,14 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
       tiles.update();
     },
     groundHeight(x, z) {
-      raycaster.set(new THREE.Vector3(x, 120, z), down);
+      raycaster.set(new THREE.Vector3(x, 300, z), down);
       const hits = raycaster.intersectObject(tiles.group, true);
-      return hits.length ? hits[0].point.y : null;
+      // reject hits outside a plausible band (coarse whole-earth tiles can
+      // produce surfaces kilometers away before local LODs stream in)
+      for (const h of hits) {
+        if (h.point.y > -60 && h.point.y < 200) return h.point.y;
+      }
+      return null;
     },
     adjustYaw(d) {
       wrapper.rotation.y += d;
@@ -82,6 +88,50 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
       tiles.dispose();
     },
   };
+}
+
+// Headless diagnostic: run the tile pipeline without WebGL and report activity.
+export async function probeTiles(origin, apiKey) {
+  const log = (m) => {
+    console.log('[probe]', m);
+    document.body.insertAdjacentHTML('beforeend', `<div>${m}</div>`);
+  };
+  try {
+    const { GoogleCloudAuthPlugin } = await import('3d-tiles-renderer/plugins');
+    const tiles = new TilesRenderer();
+    tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: apiKey, autoRefreshToken: true }));
+    const draco = new DRACOLoader();
+    draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+    const gltfLoader = new GLTFLoader(tiles.manager);
+    gltfLoader.setDRACOLoader(draco);
+    tiles.manager.addHandler(/\.(gltf|glb)(\?|$)/, gltfLoader);
+
+    const camera = new THREE.PerspectiveCamera(65, 16 / 9, 0.5, 6000);
+    camera.position.set(0, 50, 120);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    tiles.setCamera(camera);
+    tiles.setResolution(camera, 1920, 1080);
+    tiles.setLatLonToYUp(THREE.MathUtils.degToRad(origin.lat), THREE.MathUtils.degToRad(origin.lon));
+
+    tiles.addEventListener('load-tileset', () => log('load-tileset ok'));
+    tiles.addEventListener('load-model', (e) => log('load-model ok: ' + (e.tile?.content?.uri || '')));
+    tiles.addEventListener('load-error', (e) => log('LOAD-ERROR: ' + (e.error?.message || e.error || JSON.stringify(e).slice(0, 200))));
+    tiles.manager.onError = (url) => log('MANAGER-ERROR: ' + url.slice(0, 140));
+
+    let n = 0;
+    const iv = setInterval(() => {
+      camera.updateMatrixWorld();
+      tiles.update();
+      if (++n % 20 === 0) {
+        const s = tiles.stats || {};
+        log(`t=${n / 10}s progress=${tiles.loadProgress?.toFixed(3)} downloading=${s.downloading} parsing=${s.parsing} inFrustum=${s.inFrustum} groupChildren=${tiles.group.children.length}`);
+      }
+      if (n > 120) clearInterval(iv);
+    }, 100);
+  } catch (e) {
+    log('PROBE EXCEPTION: ' + e.message + '\n' + e.stack);
+  }
 }
 
 export async function fetchApiKey() {

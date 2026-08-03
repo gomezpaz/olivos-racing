@@ -24,7 +24,13 @@ app.get('/api/config', (_req, res) => {
   res.json({ googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || null });
 });
 app.get('/healthz', (_req, res) => res.send('ok'));
-app.use(express.static(join(__dirname, '..', 'dist')));
+app.use(express.static(join(__dirname, '..', 'dist'), {
+  setHeaders(res, path) {
+    // hashed assets are immutable; index.html must always revalidate
+    if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+    else res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  },
+}));
 
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
