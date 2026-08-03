@@ -28,7 +28,13 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
   draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
   const gltfLoader = new GLTFLoader(tiles.manager);
   gltfLoader.setDRACOLoader(draco);
-  tiles.manager.addHandler(/\.(gltf|glb)$/g, gltfLoader);
+  // tile URLs carry ?session=…&key=… query strings, so don't anchor at end-of-string
+  tiles.manager.addHandler(/\.(gltf|glb)(\?|$)/, gltfLoader);
+
+  tiles.addEventListener('load-error', (e) => {
+    console.error('3D tiles load error:', e);
+    dispatchEvent(new CustomEvent('tiles-error', { detail: e }));
+  });
 
   tiles.setCamera(camera);
   tiles.setResolutionFromRenderer(camera, renderer);
@@ -38,7 +44,9 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
   tiles.setLatLonToYUp(THREE.MathUtils.degToRad(origin.lat), THREE.MathUtils.degToRad(origin.lon));
 
   const wrapper = new THREE.Group();
-  const savedYaw = parseFloat(localStorage.getItem('tilesYaw') || '0');
+  // setLatLonToYUp yields north=+X / east=+Z; our world is east=+X / north=-Z,
+  // so a +90° yaw brings the imagery into our frame. 9/0 keys fine-tune from there.
+  const savedYaw = parseFloat(localStorage.getItem('tilesYaw') ?? 'x') || Math.PI / 2;
   const savedH = parseFloat(localStorage.getItem('tilesHeight') || '0');
   wrapper.rotation.y = savedYaw;
   wrapper.position.y = savedH;

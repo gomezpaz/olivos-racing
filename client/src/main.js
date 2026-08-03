@@ -125,7 +125,7 @@ async function startGame(playerName, room, carId, apiKey) {
   }
   const { colliders } = buildWorld(scene, mapData, proj, { tilesMode });
   const track = new Track(trackData, proj, scene);
-  buildCircuitDressing(scene, track.pts, { tilesMode });
+  const dressing = buildCircuitDressing(scene, track.pts, { tilesMode });
 
   const groundHeight = tilesMode ? (x, z) => tilesCtl.groundHeight(x, z) : () => 0;
 
@@ -143,6 +143,9 @@ async function startGame(playerName, room, carId, apiKey) {
   if (tilesMode) {
     input.onAction('Digit9', () => tilesCtl.adjustYaw(0.005));
     input.onAction('Digit0', () => tilesCtl.adjustYaw(-0.005));
+    input.onAction('Digit8', () => tilesCtl.adjustYaw(Math.PI / 2)); // coarse 90° fix
+    input.onAction('Minus', () => tilesCtl.adjustHeight(-1));
+    input.onAction('Equal', () => tilesCtl.adjustHeight(1));
   }
 
   // ---------- networking ----------
@@ -229,6 +232,13 @@ async function startGame(playerName, room, carId, apiKey) {
     $('results').classList.remove('hidden');
     $('start-race-btn').classList.remove('hidden');
   }
+
+  let tilesErrToasted = false;
+  addEventListener('tiles-error', () => {
+    if (tilesErrToasted) return;
+    tilesErrToasted = true;
+    toast('Error cargando Google Earth 3D — revisá la consola (F12)');
+  });
 
   function toast(text) {
     $('toast').textContent = text;
@@ -323,9 +333,17 @@ async function startGame(playerName, room, carId, apiKey) {
         +car.yaw.toFixed(3), +car.steer.toFixed(3), +car.speed.toFixed(1)] });
     }
     cpAcc += dt;
-    if (cpAcc > 2 && $('loading-note') && !$('loading-note').classList.contains('hidden')) {
+    if (cpAcc > 2) {
       cpAcc = 0;
       $('loading-note').classList.add('hidden');
+      // photorealistic mode: settle track furniture onto the real terrain
+      if (tilesMode) {
+        const cp = track.checkpoints[track.nextCp % track.checkpoints.length];
+        const gy = tilesCtl.groundHeight(cp.pos.x, cp.pos.z);
+        if (gy != null) { track.groundY = gy; track.updateMarker(); }
+        const g0 = tilesCtl.groundHeight(track.pts[0].x, track.pts[0].z);
+        if (g0 != null) dressing.position.y = g0;
+      }
     }
 
     renderer.render(scene, camera);

@@ -3,8 +3,19 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { readFileSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// minimal .env loader (no dependency) — platform env vars still win
+try {
+  const env = readFileSync(join(__dirname, '..', '.env'), 'utf8');
+  for (const line of env.split('\n')) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].trim();
+  }
+} catch { /* no .env — fine */ }
+
 const PORT = process.env.PORT || 8080;
 const STATE_HZ = 15;
 

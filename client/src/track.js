@@ -30,6 +30,7 @@ export class Track {
     }
 
     this.marker = makeCheckpointMarker(scene);
+    this.groundY = 0; // terrain height at markers (photorealistic mode)
     this.nextCp = 0;
     this.lap = 0;
     this.raceStart = 0;
@@ -85,7 +86,7 @@ export class Track {
 
   updateMarker() {
     const cp = this.checkpoints[this.nextCp % this.checkpoints.length];
-    this.marker.position.set(cp.pos.x, 0, cp.pos.z);
+    this.marker.position.set(cp.pos.x, this.groundY, cp.pos.z);
   }
 
   nearestCheckpoint(carPos) {

@@ -41,10 +41,9 @@ export function buildWorld(scene, data, proj, { tilesMode = false } = {}) {
       const pts = b.p.map(([la, lo]) => proj.toWorld(la, lo));
       const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, -p.z)));
       const geo = new THREE.ExtrudeGeometry(shape, { depth: b.h, bevelEnabled: false });
+      // rotateX(-90) maps (x,y,z)->(x,z,-y): extrusion depth becomes height y∈[0,h],
+      // shape y becomes -z (we pre-negated z when building the shape)
       geo.rotateX(-Math.PI / 2);
-      geo.translate(0, b.h, 0);
-      // ExtrudeGeometry extrudes +z; after rotateX(-90) depth axis -> +y... verify: rotateX(-90): (x,y,z)->(x,z,-y).
-      // shape in xy at z in [0,depth] -> becomes (x, z(depth), -y). So height ok, but plan flipped to -y: we pre-negated z.
       colorGeometry(geo, palette[i % palette.length]);
       bGeos.push(geo);
       colliders.addPolygon(pts, b.h);
@@ -169,11 +168,13 @@ export function buildCircuitDressing(scene, trackPts, { tilesMode = false } = {}
   const g = new THREE.Group();
   scene.add(g);
 
-  // racing line ribbon (subtle in tiles mode, bold in fallback)
-  const lineGeo = ribbonGeometry(trackPts, tilesMode ? 7 : 9, 0.06);
-  const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({
-    color: 0x3fa7ff, transparent: true, opacity: tilesMode ? 0.18 : 0.28, depthWrite: false }));
-  g.add(line);
+  // racing line ribbon — fallback mode only (flat ribbon can't follow real 3D terrain)
+  if (!tilesMode) {
+    const lineGeo = ribbonGeometry(trackPts, 9, 0.06);
+    const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({
+      color: 0x3fa7ff, transparent: true, opacity: 0.28, depthWrite: false }));
+    g.add(line);
+  }
 
   // start/finish gantry with checkered banner
   const p0 = trackPts[0], p1 = trackPts[2];
