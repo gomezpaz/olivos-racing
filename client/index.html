@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Olivos GP — Carreras en Olivos, Buenos Aires</title>
+<style>
+  :root {
+    --accent: #74acdf; /* celeste argentino */
+    --gold: #f6b40e;
+    --bg: #0c0f14;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: #e8eaed; overflow: hidden; }
+  canvas { display: block; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .hidden { display: none !important; }
+
+  /* ===== Menu ===== */
+  #menu { background: radial-gradient(ellipse at 50% 30%, #16202e 0%, #0c0f14 70%); flex-direction: column; }
+  .title { font-size: 64px; font-weight: 900; letter-spacing: 4px;
+    background: linear-gradient(180deg, #fff 30%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .subtitle { color: #9aa7b5; margin: 6px 0 34px; font-size: 15px; letter-spacing: 2px; text-transform: uppercase; }
+  .card { background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 16px; padding: 26px 30px; width: 460px; backdrop-filter: blur(8px); }
+  .field { margin-bottom: 18px; }
+  .field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #8b98a5; margin-bottom: 7px; }
+  .field input { width: 100%; padding: 11px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.35); color: #fff; font-size: 16px; outline: none; }
+  .field input:focus { border-color: var(--accent); }
+  .cars { display: flex; gap: 10px; }
+  .car-card { flex: 1; border: 1.5px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px 10px; cursor: pointer; text-align: center; transition: all .15s; }
+  .car-card.sel { border-color: var(--accent); background: rgba(116,172,223,0.12); }
+  .car-card.locked { opacity: 0.35; cursor: not-allowed; }
+  .car-name { font-size: 13px; font-weight: 700; margin-top: 6px; }
+  .car-tag { font-size: 11px; color: #8b98a5; margin-top: 3px; }
+  .car-swatch { width: 42px; height: 26px; margin: 0 auto; border-radius: 6px; box-shadow: inset 0 -6px 12px rgba(0,0,0,0.4); }
+  .stats { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+  .stat { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; }
+  .stat i { display: block; height: 100%; background: var(--accent); }
+  .btn { width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 17px; font-weight: 800; letter-spacing: 1px; cursor: pointer;
+    background: linear-gradient(180deg, var(--accent), #4d8fc9); color: #06121f; margin-top: 6px; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.ghost { background: rgba(255,255,255,0.08); color: #cfd8e0; font-weight: 600; font-size: 13px; margin-top: 10px; }
+  .room-row { display: flex; gap: 8px; }
+  .room-row input { flex: 1; }
+  .hint { font-size: 12px; color: #6b7885; margin-top: 14px; text-align: center; line-height: 1.6; }
+  .mode-note { margin-top: 16px; font-size: 12px; color: #8b98a5; text-align: center; }
+  .mode-note b { color: var(--gold); }
+
+  /* ===== HUD ===== */
+  #hud { pointer-events: none; z-index: 5; }
+  .hud-panel { position: fixed; background: rgba(10,14,20,0.62); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 16px; backdrop-filter: blur(6px); }
+  #speedo { left: 22px; bottom: 22px; text-align: right; }
+  #speedo .kmh { font-size: 42px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; }
+  #speedo .unit { font-size: 11px; color: #8b98a5; letter-spacing: 2px; }
+  #race-info { left: 22px; top: 22px; font-variant-numeric: tabular-nums; }
+  #race-info .lap { font-size: 22px; font-weight: 800; }
+  #race-info .time { font-size: 14px; color: #b7c2cd; }
+  #players { right: 22px; top: 22px; min-width: 170px; font-size: 13px; }
+  #players .p { display: flex; justify-content: space-between; gap: 14px; padding: 2px 0; }
+  #players .me { color: var(--accent); font-weight: 700; }
+  #center-msg { position: fixed; top: 32%; left: 0; right: 0; text-align: center; font-size: 84px; font-weight: 900; text-shadow: 0 4px 30px rgba(0,0,0,0.6); }
+  #toast { position: fixed; bottom: 96px; left: 0; right: 0; text-align: center; font-size: 18px; font-weight: 700; color: var(--gold); text-shadow: 0 2px 12px rgba(0,0,0,0.8); }
+  #controls-hint { right: 22px; bottom: 22px; font-size: 11px; color: #8b98a5; line-height: 1.7; text-align: right; }
+  #start-race-btn { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); width: auto; padding: 12px 34px; pointer-events: auto; margin: 0; }
+  #results { flex-direction: column; background: rgba(5,8,12,0.82); }
+  #results .card { text-align: center; }
+  #results h2 { font-size: 30px; margin-bottom: 18px; color: var(--gold); }
+  #results .row { display: flex; justify-content: space-between; padding: 7px 4px; font-size: 16px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+  #attribution { position: fixed; left: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.75); z-index: 6; text-shadow: 0 1px 2px #000; }
+  #loading-note { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #8b98a5; background: rgba(10,14,20,0.6); padding: 6px 14px; border-radius: 8px; z-index: 6; }
+</style>
+</head>
+<body>
+  <div id="menu" class="overlay">
+    <div class="title">OLIVOS GP</div>
+    <div class="subtitle">Circuito Quinta de Olivos · Vicente López · Buenos Aires</div>
+    <div class="card">
+      <div class="field">
+        <label>Tu nombre</label>
+        <input id="name-input" maxlength="16" placeholder="Piloto" />
+      </div>
+      <div class="field">
+        <label>Elegí tu auto</label>
+        <div class="cars" id="car-list"></div>
+      </div>
+      <div class="field">
+        <label>Sala</label>
+        <div class="room-row">
+          <input id="room-input" maxlength="20" />
+          <button class="btn ghost" style="width:auto;margin:0;padding:0 16px" id="copy-link">Copiar link</button>
+        </div>
+      </div>
+      <button class="btn" id="play-btn">JUGAR</button>
+      <div class="hint">WASD / flechas para manejar · ESPACIO freno de mano · R volver a la pista</div>
+      <div class="mode-note" id="mode-note"></div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div class="hud-panel" id="race-info"><div class="lap">Vuelta —</div><div class="time">—</div></div>
+    <div class="hud-panel" id="speedo"><div class="kmh">0</div><div class="unit">KM/H</div></div>
+    <div class="hud-panel" id="players"></div>
+    <div id="center-msg"></div>
+    <div id="toast"></div>
+    <div id="controls-hint">WASD manejar · ESPACIO freno de mano<br>R reset · C cámara</div>
+    <button class="btn" id="start-race-btn">🏁 Largar carrera</button>
+  </div>
+
+  <div id="results" class="overlay hidden">
+    <div class="card">
+      <h2>🏁 Resultado</h2>
+      <div id="results-rows"></div>
+      <button class="btn" id="again-btn">Otra carrera</button>
+    </div>
+  </div>
+
+  <div id="loading-note" class="hidden">Cargando Olivos…</div>
+  <div id="attribution" class="hidden"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
