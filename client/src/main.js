@@ -7,6 +7,7 @@ import { Car, RemoteCar } from './car.js';
 import { Track } from './track.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
+import { CarAudio } from './audio.js';
 import { CARS } from './cars/index.js';
 
 const $ = (id) => document.getElementById(id);
@@ -189,7 +190,14 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
   let terrainWaitMs = 0;
   if (awaitingTerrain) car.frozen = true;
 
+  const audio = new CarAudio();
+  try { audio.start(); } catch (e) { console.warn('audio unavailable', e); }
+
   const input = new Input();
+  input.onAction('KeyM', () => {
+    const muted = audio.toggleMute();
+    toast(muted ? '🔇 Sonido apagado' : '🔊 Sonido prendido');
+  });
   input.onAction('KeyR', () => {
     const cp = track.nearestCheckpoint(car.pos);
     car.place(cp.pos.x, cp.pos.z, cp.yaw, tilesMode ? (x, z) => tilesCtl.groundHeight(x, z) ?? car.groundY : null);
@@ -359,7 +367,9 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
       }
     }
 
-    car.update(dt, input.read(), groundHeight);
+    const inp = input.read();
+    car.update(dt, inp, groundHeight);
+    audio.update(car.speed, car.frozen ? 0 : inp.throttle, inp.handbrake, dt);
 
     // building collision (fallback mode only)
     const hit = colliders.resolve(car.pos.x, car.pos.z);
