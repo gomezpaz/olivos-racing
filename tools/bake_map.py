@@ -18,9 +18,11 @@ TRACKS = [
         'id': 'warnes-villate',
         'name': 'Circuito Warnes',
         'location': 'Warnes y Carlos Villate, Olivos',
-        'streets': ["Carlos Villate", "Chacabuco", "Antonio Malaver", "Ignacio Warnes"],
+        # NOTE: Chacabuco is severed by the Belgrano Norte railway — José María
+        # Paz is the farthest cross street that stays continuous (west of rail)
+        'streets': ["Carlos Villate", "General José María Paz", "Antonio Malaver", "Ignacio Warnes"],
         'start': (-34.5237, -58.5038),  # Warnes y Villate
-        'laps': 4,
+        'laps': 5,
     },
     {
         'id': 'quinta-de-olivos',
@@ -64,50 +66,88 @@ def principal_sort(pts):
 def closest_pair(pa, pb):
     return min(((a, b) for a in pa for b in pb), key=lambda ab: dist(*ab))
 
+def chain_street(ways, name):
+    """Assemble one continuous polyline for a street by walking OSM way
+    connectivity, preferring the straightest continuation at junctions.
+    Immune to the parallel-fragment interleaving that point-sorting suffers."""
+    polys = [[(g['lat'], g['lon']) for g in w['geometry']]
+             for w in ways if w.get('tags', {}).get('name') == name and 'geometry' in w]
+    if not polys:
+        raise SystemExit(f"street '{name}' not found")
+    key = lambda p: (round(p[0], 5), round(p[1], 5))  # ~1m node merge
+    from collections import defaultdict
+    at = defaultdict(list)  # node -> [(way, point_index)] — any point, not just endpoints
+    for i, pl in enumerate(polys):
+        for j, p in enumerate(pl):
+            at[key(p)].append((i, j))
+
+    def direction(a, b):
+        kx = 111320 * math.cos(math.radians(-34.51)); ky = 110574
+        dx, dy = (b[1]-a[1])*kx, (b[0]-a[0])*ky
+        n = math.hypot(dx, dy) or 1
+        return (dx/n, dy/n)
+
+    def walk(start_i, reverse):
+        used = {start_i}
+        chain = list(reversed(polys[start_i])) if reverse else list(polys[start_i])
+        while True:
+            node = key(chain[-1])
+            # candidate continuations: enter way i at point j, leave toward either end
+            options = []
+            for (i, j) in at[node]:
+                if i in used:
+                    continue
+                fwd = polys[i][j:]
+                back = list(reversed(polys[i][:j+1]))
+                for pl in (fwd, back):
+                    if len(pl) > 1:
+                        options.append((i, pl))
+            if not options:
+                break
+            cur_dir = direction(chain[-2], chain[-1]) if len(chain) > 1 else (1, 0)
+            def straightness(opt):
+                d = direction(opt[1][0], opt[1][1])
+                return -(cur_dir[0]*d[0] + cur_dir[1]*d[1])
+            options.sort(key=straightness)
+            if straightness(options[0]) > -0.2:  # only continue if roughly straight
+                break
+            i, pl = options[0]
+            used.add(i)
+            chain.extend(pl[1:])
+        return chain, used
+
+    # longest chain over all starting fragments
+    best = []
+    for i in range(len(polys)):
+        fwd, used = walk(i, False)
+        back, _ = walk(i, True)
+        chain = list(reversed(back))[:-1] + fwd  # join both directions at i
+        if len(chain) > len(best):
+            best = chain
+    return best
+
 def stitch_circuit(ways, names, start, lane_offsets=None):
-    streets = {n: collect_points(ways, n) for n in names}
-    for n, p in streets.items():
-        if len(p) < 4:
-            raise SystemExit(f"street '{n}' has too few points ({len(p)})")
+    chains = {n: chain_street(ways, n) for n in names}
     loop = []
     k = len(names)
     for i, name in enumerate(names):
-        prev_name = names[(i-1) % k]
-        next_name = names[(i+1) % k]
-        pts, t = principal_sort(streets[name])
-        c_in, _ = closest_pair(pts, streets[prev_name])
-        c_out, _ = closest_pair(pts, streets[next_name])
-        t0, t1 = t(c_in), t(c_out)
-        lo, hi = min(t0, t1), max(t0, t1)
-        leg = [p for p in pts if lo - 5 <= t(p) <= hi + 5]
-        if t0 > t1:
-            leg.reverse()
-        # merge dual carriageways: average points that sit within 12m along-axis
-        merged = []
-        for p in leg:
-            if merged and dist(merged[-1][0], p) < 12:
-                grp = merged[-1]; grp.append(p)
-            else:
-                merged.append([p])
-        leg = [(sum(q[0] for q in g)/len(g), sum(q[1] for q in g)/len(g)) for g in merged]
-        # snap to real street segments — leg clipping/merging can cut corners
-        # diagonally through housing blocks otherwise
-        leg = snap_to_streets(leg, segments_for(ways, names))
+        chain = chains[name]
+        prev_chain = chains[names[(i-1) % k]]
+        next_chain = chains[names[(i+1) % k]]
+        c_in, _ = closest_pair(chain, prev_chain)
+        c_out, _ = closest_pair(chain, next_chain)
+        i_in = min(range(len(chain)), key=lambda j: dist(chain[j], c_in))
+        i_out = min(range(len(chain)), key=lambda j: dist(chain[j], c_out))
+        leg = chain[i_in:i_out+1] if i_in <= i_out else list(reversed(chain[i_out:i_in+1]))
         off = (lane_offsets or {}).get(name, 0)
         if off and len(leg) > 1:
             leg = offset_right(leg, off)
         loop.extend(leg)
     loop = resample_smooth(loop, step=8.0, passes=2)
-    # final snap: the resampler bridges leg joints in straight lines that can
-    # cut through blocks; tolerance sits above the lane offset so that survives
-    max_off = max((lane_offsets or {}).values(), default=0)
-    segs = segments_for(ways, names)
-    loop = snap_to_streets(loop, segs, tol=max_off + 3.5)
-    loop = resample_smooth(loop, step=8.0, passes=1)
     loop = remove_backtracks(loop)
-    # end on a snap so nothing smoothing re-introduced can leave the street
-    loop = snap_to_streets(loop, segs, tol=max_off + 3.5)
-    loop = remove_backtracks(loop)
+    gaps = [dist(a, b) for a, b in zip(loop, loop[1:] + [loop[0]])]
+    if max(gaps) > 20:
+        raise SystemExit(f"stitch produced a {max(gaps):.1f}m gap — inspect leg joins")
     # rotate so the loop starts at the requested anchor intersection
     si = min(range(len(loop)), key=lambda i: dist(loop[i], start))
     return loop[si:] + loop[:si]
