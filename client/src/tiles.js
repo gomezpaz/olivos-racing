@@ -39,8 +39,21 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
   tiles.setCamera(camera);
   if (renderer) tiles.setResolutionFromRenderer(camera, renderer);
   else tiles.setResolution(camera, 1920, 1080);
-  tiles.errorTarget = 8;
-  if (tiles.lruCache) tiles.lruCache.maxBytesSize = 512 * 1024 * 1024;
+  tiles.errorTarget = 3; // lower = sharper LODs at street level
+  if (tiles.lruCache) tiles.lruCache.maxBytesSize = 768 * 1024 * 1024;
+
+  // sharpen textures at grazing angles (roads were smearing badly without this)
+  const maxAniso = renderer ? renderer.capabilities.getMaxAnisotropy() : 0;
+  if (maxAniso > 1) {
+    tiles.addEventListener('load-model', ({ scene: tileScene }) => {
+      tileScene.traverse((c) => {
+        if (c.material?.map) {
+          c.material.map.anisotropy = maxAniso;
+          c.material.map.needsUpdate = true;
+        }
+      });
+    });
+  }
 
   tiles.setLatLonToYUp(THREE.MathUtils.degToRad(origin.lat), THREE.MathUtils.degToRad(origin.lon));
 
@@ -68,12 +81,13 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
     groundHeight(x, z) {
       raycaster.set(new THREE.Vector3(x, 300, z), down);
       const hits = raycaster.intersectObject(tiles.group, true);
-      // reject hits outside a plausible band (coarse whole-earth tiles can
-      // produce surfaces kilometers away before local LODs stream in)
+      // Take the lowest plausible hit: photogrammetry tree canopies hang over
+      // the road, and coarse whole-earth tiles produce km-scale garbage.
+      let best = null;
       for (const h of hits) {
-        if (h.point.y > -60 && h.point.y < 200) return h.point.y;
+        if (h.point.y > -60 && h.point.y < 200 && (best == null || h.point.y < best)) best = h.point.y;
       }
-      return null;
+      return best;
     },
     adjustYaw(d) {
       wrapper.rotation.y += d;

@@ -11,10 +11,26 @@ Usage: python3 tools/bake_map.py <roads.json> <buildings.json> <out.json>
 """
 import json, math, sys
 
-# Circuit legs around the Quinta de Olivos, in driving order.
-# Each leg: (street name regex-ish exact match set, next street for the corner)
-CIRCUIT_STREETS = ["Avenida del Libertador", "Antonio Malaver", "Avenida Maipú", "Corrientes"]
-LAPS_DEFAULT = 3
+# Circuits: ordered street loops. 'start' anchors the start/finish line to the
+# nearest point on the stitched loop (an intersection makes a natural anchor).
+TRACKS = [
+    {
+        'id': 'warnes-villate',
+        'name': 'Circuito Warnes',
+        'location': 'Warnes y Carlos Villate, Olivos',
+        'streets': ["Carlos Villate", "Chacabuco", "Antonio Malaver", "Ignacio Warnes"],
+        'start': (-34.5237, -58.5038),  # Warnes y Villate
+        'laps': 4,
+    },
+    {
+        'id': 'quinta-de-olivos',
+        'name': 'Circuito Quinta de Olivos',
+        'location': 'Olivos, Vicente López, Buenos Aires',
+        'streets': ["Avenida del Libertador", "Antonio Malaver", "Avenida Maipú", "Corrientes"],
+        'start': (-34.50833, -58.47941),  # Libertador y Corrientes
+        'laps': 3,
+    },
+]
 
 def dist(a, b):
     # meters, equirectangular — fine at this scale
@@ -45,16 +61,16 @@ def principal_sort(pts):
 def closest_pair(pa, pb):
     return min(((a, b) for a in pa for b in pb), key=lambda ab: dist(*ab))
 
-def stitch_circuit(ways):
-    streets = {n: collect_points(ways, n) for n in CIRCUIT_STREETS}
+def stitch_circuit(ways, names, start):
+    streets = {n: collect_points(ways, n) for n in names}
     for n, p in streets.items():
         if len(p) < 4:
             raise SystemExit(f"street '{n}' has too few points ({len(p)})")
     loop = []
-    k = len(CIRCUIT_STREETS)
-    for i, name in enumerate(CIRCUIT_STREETS):
-        prev_name = CIRCUIT_STREETS[(i-1) % k]
-        next_name = CIRCUIT_STREETS[(i+1) % k]
+    k = len(names)
+    for i, name in enumerate(names):
+        prev_name = names[(i-1) % k]
+        next_name = names[(i+1) % k]
         pts, t = principal_sort(streets[name])
         c_in, _ = closest_pair(pts, streets[prev_name])
         c_out, _ = closest_pair(pts, streets[next_name])
@@ -72,7 +88,30 @@ def stitch_circuit(ways):
                 merged.append([p])
         leg = [(sum(q[0] for q in g)/len(g), sum(q[1] for q in g)/len(g)) for g in merged]
         loop.extend(leg)
-    return resample_smooth(loop, step=8.0, passes=3)
+    loop = resample_smooth(loop, step=8.0, passes=3)
+    loop = remove_backtracks(loop)
+    # rotate so the loop starts at the requested anchor intersection
+    si = min(range(len(loop)), key=lambda i: dist(loop[i], start))
+    return loop[si:] + loop[:si]
+
+def remove_backtracks(loop, max_passes=80):
+    # drop vertices that reverse direction (seam overlaps at leg joins)
+    for _ in range(max_passes):
+        n = len(loop)
+        drop = None
+        for i in range(n):
+            a, b, c = loop[(i-1) % n], loop[i], loop[(i+1) % n]
+            kx = 111320 * math.cos(math.radians(-34.51)); ky = 110574
+            v1 = ((b[1]-a[1])*kx, (b[0]-a[0])*ky)
+            v2 = ((c[1]-b[1])*kx, (c[0]-b[0])*ky)
+            d1, d2 = dist(a, b), dist(b, c)
+            if d1 > 0.5 and d2 > 0.5 and (v1[0]*v2[0] + v1[1]*v2[1]) / (d1*d2) < -0.2:
+                drop = i
+                break
+        if drop is None:
+            return loop
+        loop = loop[:drop] + loop[drop+1:]
+    return loop
 
 def resample_smooth(loop, step, passes):
     # close the loop, resample at fixed step, then moving-average smooth
@@ -98,9 +137,20 @@ def main(roads_path, buildings_path, out_path):
     roads_raw = json.load(open(roads_path))['elements']
     buildings_raw = json.load(open(buildings_path))['elements']
 
-    circuit = stitch_circuit(roads_raw)
-    lat0 = sum(p[0] for p in circuit)/len(circuit)
-    lon0 = sum(p[1] for p in circuit)/len(circuit)
+    tracks = []
+    for cfg in TRACKS:
+        circuit = stitch_circuit(roads_raw, cfg['streets'], cfg['start'])
+        total = sum(dist(a, b) for a, b in zip(circuit, circuit[1:] + [circuit[0]]))
+        tracks.append({
+            'id': cfg['id'], 'name': cfg['name'], 'location': cfg['location'],
+            'laps': cfg['laps'], 'lengthM': round(total),
+            'path': [[round(p[0], 7), round(p[1], 7)] for p in circuit],
+        })
+        print(f"{cfg['id']}: {len(circuit)} pts, {total:.0f} m, starts {circuit[0][0]:.5f},{circuit[0][1]:.5f}")
+
+    allpts = [p for t in tracks for p in t['path']]
+    lat0 = sum(p[0] for p in allpts)/len(allpts)
+    lon0 = sum(p[1] for p in allpts)/len(allpts)
 
     roads = []
     for w in roads_raw:
@@ -125,23 +175,15 @@ def main(roads_path, buildings_path, out_path):
         buildings.append({'h': round(h, 1),
                           'p': [[round(g['lat'], 6), round(g['lon'], 6)] for g in w['geometry']]})
 
-    total = sum(dist(a, b) for a, b in zip(circuit, circuit[1:] + [circuit[0]]))
     data = {
         'origin': {'lat': round(lat0, 7), 'lon': round(lon0, 7)},
-        'tracks': [{
-            'id': 'quinta-de-olivos',
-            'name': 'Circuito Quinta de Olivos',
-            'location': 'Olivos, Vicente López, Buenos Aires',
-            'laps': LAPS_DEFAULT,
-            'lengthM': round(total),
-            'path': [[round(p[0], 7), round(p[1], 7)] for p in circuit],
-        }],
+        'tracks': tracks,
         'roads': roads,
         'buildings': buildings,
     }
     with open(out_path, 'w') as f:
         json.dump(data, f, separators=(',', ':'))
-    print(f"circuit: {len(circuit)} pts, {total:.0f} m | roads: {len(roads)} | buildings: {len(buildings)}")
+    print(f"roads: {len(roads)} | buildings: {len(buildings)}")
     print(f"origin: {lat0:.6f},{lon0:.6f} -> {out_path}")
 
 if __name__ == '__main__':

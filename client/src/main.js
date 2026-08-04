@@ -47,6 +47,16 @@ for (const car of CARS) {
   carList.appendChild(el);
 }
 
+const trackSelect = $('track-select');
+for (let i = 0; i < mapData.tracks.length; i++) {
+  const t = mapData.tracks[i];
+  const opt = document.createElement('option');
+  opt.value = i;
+  opt.textContent = `${t.name} · ${(t.lengthM / 1000).toFixed(1)} km · ${t.laps} vueltas`;
+  trackSelect.appendChild(opt);
+}
+trackSelect.value = localStorage.getItem('trackIdx') || '0';
+
 $('copy-link').onclick = () => {
   const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(roomInput.value.trim())}`;
   navigator.clipboard.writeText(url);
@@ -64,18 +74,20 @@ apiKeyPromise.then((k) => {
 $('play-btn').onclick = async () => {
   const name = nameInput.value.trim() || 'Piloto';
   const room = roomInput.value.trim() || 'olivos';
+  const trackIdx = parseInt(trackSelect.value, 10) || 0;
   localStorage.setItem('playerName', name);
   localStorage.setItem('room', room);
   localStorage.setItem('car', selectedCar);
+  localStorage.setItem('trackIdx', String(trackIdx));
   history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
   $('menu').classList.add('hidden');
   $('hud').classList.remove('hidden');
-  startGame(name, room, selectedCar, await apiKeyPromise);
+  startGame(name, room, selectedCar, await apiKeyPromise, trackIdx);
 };
 } // end !PROBING
 
 // ---------- game ----------
-async function startGame(playerName, room, carId, apiKey) {
+async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
   // renderer is optional: headless QA drives the full game sim without WebGL
   let renderer = null;
   try {
@@ -132,7 +144,7 @@ async function startGame(playerName, room, carId, apiKey) {
   scene.add(new THREE.HemisphereLight(0xbfd7f0, 0x54503e, 0.75));
 
   const proj = makeProjector(mapData.origin);
-  const trackData = mapData.tracks[0];
+  const trackData = mapData.tracks[Math.min(trackIdx, mapData.tracks.length - 1)];
 
   $('loading-note').classList.remove('hidden');
   const tilesCtl = await initTiles(scene, camera, renderer, mapData.origin, apiKey);
