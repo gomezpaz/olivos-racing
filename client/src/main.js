@@ -170,8 +170,15 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     atmo.addToMask(track.marker);
     addEventListener('resize', () => atmo.setSize(innerWidth, innerHeight));
   }
+  let roadOverlay = null;
+  if (tilesMode) {
+    const { RoadOverlay } = await import('./roadOverlay.js');
+    roadOverlay = new RoadOverlay(scene, track.pts);
+  }
 
-  const groundHeight = tilesMode ? (x, z) => tilesCtl.groundHeight(x, z) : () => 0;
+  const groundHeight = tilesMode
+    ? (x, z) => roadOverlay?.heightAt(x, z) ?? tilesCtl.groundHeight(x, z)
+    : () => 0;
 
   const car = new Car(carId, scene);
   if (atmo) atmo.addToMask(car.mesh);
@@ -316,7 +323,7 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
 
   // ---------- loop ----------
   const clock = new THREE.Clock();
-  let sendAcc = 0, cpAcc = 0;
+  let sendAcc = 0, cpAcc = 0, roadAcc = 0;
   const camPos = new THREE.Vector3();
   let firstFrames = 0;
 
@@ -428,6 +435,12 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
         +car.pos.x.toFixed(2), +car.pos.y.toFixed(2), +car.pos.z.toFixed(2),
         +car.yaw.toFixed(3), +car.steer.toFixed(3), +car.speed.toFixed(1)] });
     }
+    roadAcc += dt;
+    if (roadOverlay && roadAcc > 0.4) {
+      roadAcc = 0;
+      roadOverlay.update(car.pos, (x, z) => tilesCtl.groundHeight(x, z), now);
+    }
+
     cpAcc += dt;
     if (cpAcc > 2) {
       cpAcc = 0;
