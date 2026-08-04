@@ -29,6 +29,9 @@ TRACKS = [
         'streets': ["Avenida del Libertador", "Antonio Malaver", "Avenida Maipú", "Corrientes"],
         'start': (-34.50833, -58.47941),  # Libertador y Corrientes
         'laps': 3,
+        # dual carriageways: OSM centerline = tree-filled median; shift the
+        # racing line onto the right-hand (direction-of-travel) carriageway
+        'laneOffset': {"Avenida del Libertador": 5.5, "Avenida Maipú": 5.5},
     },
 ]
 
@@ -61,7 +64,7 @@ def principal_sort(pts):
 def closest_pair(pa, pb):
     return min(((a, b) for a in pa for b in pb), key=lambda ab: dist(*ab))
 
-def stitch_circuit(ways, names, start):
+def stitch_circuit(ways, names, start, lane_offsets=None):
     streets = {n: collect_points(ways, n) for n in names}
     for n, p in streets.items():
         if len(p) < 4:
@@ -87,12 +90,27 @@ def stitch_circuit(ways, names, start):
             else:
                 merged.append([p])
         leg = [(sum(q[0] for q in g)/len(g), sum(q[1] for q in g)/len(g)) for g in merged]
+        off = (lane_offsets or {}).get(name, 0)
+        if off and len(leg) > 1:
+            leg = offset_right(leg, off)
         loop.extend(leg)
     loop = resample_smooth(loop, step=8.0, passes=3)
     loop = remove_backtracks(loop)
     # rotate so the loop starts at the requested anchor intersection
     si = min(range(len(loop)), key=lambda i: dist(loop[i], start))
     return loop[si:] + loop[:si]
+
+def offset_right(leg, meters):
+    # shift each point perpendicular-right of the direction of travel
+    kx = 111320 * math.cos(math.radians(-34.51)); ky = 110574
+    out = []
+    for i, p in enumerate(leg):
+        a = leg[max(0, i-1)]; b = leg[min(len(leg)-1, i+1)]
+        dx = (b[1]-a[1])*kx; dy = (b[0]-a[0])*ky   # east, north in meters
+        n = math.hypot(dx, dy) or 1
+        rx, ry = dy/n, -dx/n                        # right of travel
+        out.append((p[0] + (ry*meters)/ky, p[1] + (rx*meters)/kx))
+    return out
 
 def remove_backtracks(loop, max_passes=80):
     # drop vertices that reverse direction (seam overlaps at leg joins)
@@ -139,7 +157,7 @@ def main(roads_path, buildings_path, out_path):
 
     tracks = []
     for cfg in TRACKS:
-        circuit = stitch_circuit(roads_raw, cfg['streets'], cfg['start'])
+        circuit = stitch_circuit(roads_raw, cfg['streets'], cfg['start'], cfg.get('laneOffset'))
         total = sum(dist(a, b) for a, b in zip(circuit, circuit[1:] + [circuit[0]]))
         tracks.append({
             'id': cfg['id'], 'name': cfg['name'], 'location': cfg['location'],

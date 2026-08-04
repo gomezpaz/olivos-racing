@@ -53,6 +53,16 @@ try {
   await send('Page.navigate', { url });
   console.log(`navigated, waiting ${waitMs}ms for tiles…`);
   await sleep(parseInt(waitMs, 10));
+
+  // optional: hold W to drive before the screenshot (DRIVE_MS env var)
+  const driveMs = parseInt(process.env.DRIVE_MS || '0', 10);
+  if (driveMs > 0) {
+    console.log(`driving for ${driveMs}ms…`);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 });
+    await sleep(driveMs);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 });
+    await sleep(400);
+  }
   const dbg = await send('Runtime.evaluate', {
     expression: "document.getElementById('debug-overlay')?.textContent || 'no overlay'",
   });
