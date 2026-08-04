@@ -15,6 +15,8 @@ const chrome = spawn(CHROME, [
   `--remote-debugging-port=${PORT}`,
   '--no-first-run',
   '--hide-scrollbars',
+  '--user-data-dir=/tmp/olivos-qa-profile', // throwaway: don't grow user caches
+  '--disk-cache-size=104857600',
   `--window-size=${w},${h}`,
   'about:blank',
 ], { stdio: 'ignore' });

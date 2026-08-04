@@ -11,7 +11,9 @@ const PORT = 9378;
 const CHROME = `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
 
 const chrome = spawn(CHROME, [
-  '--headless=new', `--remote-debugging-port=${PORT}`, '--no-first-run', 'about:blank',
+  '--headless=new', `--remote-debugging-port=${PORT}`, '--no-first-run',
+  '--user-data-dir=/tmp/olivos-qa-profile', '--disk-cache-size=104857600',
+  'about:blank',
 ], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
