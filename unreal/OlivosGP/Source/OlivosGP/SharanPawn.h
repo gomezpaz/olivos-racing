@@ -37,6 +37,9 @@ public:
     UPROPERTY(VisibleAnywhere, Category = "Vehicle")
     TObjectPtr<UCameraComponent> Camera;
 
+    UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+    TObjectPtr<class URaceComponent> Race;
+
     // --- tuning (matches the web build's sharan-2006 physics) ---
     UPROPERTY(EditAnywhere, Category = "Vehicle|Tuning") float TopSpeed = 5150.f;      // cm/s (~185 km/h)
     UPROPERTY(EditAnywhere, Category = "Vehicle|Tuning") float Accel = 620.f;          // cm/s^2
@@ -71,6 +74,7 @@ private:
     UPROPERTY() TObjectPtr<UInputAction> BrakeAction;
     UPROPERTY() TObjectPtr<UInputAction> SteerAction;
     UPROPERTY() TObjectPtr<UInputAction> HandbrakeAction;
+    UPROPERTY() TObjectPtr<UInputAction> StartRaceAction;
     UPROPERTY() TObjectPtr<UInputMappingContext> MappingContext;
 
     void BuildInputAssets();

@@ -9,6 +9,7 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
+#include "RaceComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
 ASharanPawn::ASharanPawn()
@@ -40,6 +41,8 @@ ASharanPawn::ASharanPawn()
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(CameraArm);
     Camera->FieldOfView = 75.f;
+
+    Race = CreateDefaultSubobject<URaceComponent>(TEXT("Race"));
 
     bReplicates = true;
     SetReplicateMovement(true);
@@ -97,6 +100,10 @@ void ASharanPawn::BuildInputAssets()
     FEnhancedActionKeyMapping& SteerRightArrow = MappingContext->MapKey(SteerAction, EKeys::Right);
     SteerRightArrow.Modifiers.Add(NewObject<UInputModifierNegate>(MappingContext));
     MappingContext->MapKey(HandbrakeAction, EKeys::SpaceBar);
+
+    StartRaceAction = NewObject<UInputAction>(this, TEXT("IA_StartRace"));
+    StartRaceAction->ValueType = EInputActionValueType::Boolean;
+    MappingContext->MapKey(StartRaceAction, EKeys::Enter);
 }
 
 void ASharanPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -113,6 +120,8 @@ void ASharanPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
         Input->BindAction(SteerAction, ETriggerEvent::Completed, this, &ASharanPawn::OnSteer);
         Input->BindAction(HandbrakeAction, ETriggerEvent::Started, this, &ASharanPawn::OnHandbrake);
         Input->BindAction(HandbrakeAction, ETriggerEvent::Completed, this, &ASharanPawn::OnHandbrakeReleased);
+        Input->BindActionValueLambda(StartRaceAction, ETriggerEvent::Started,
+            [this](const FInputActionValue&) { if (Race) Race->StartRace(); });
     }
 }
 

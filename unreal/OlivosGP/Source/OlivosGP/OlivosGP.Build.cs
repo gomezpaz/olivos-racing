@@ -14,7 +14,10 @@ public class OlivosGP : ModuleRules
             "InputCore",
             "EnhancedInput",
             "ChaosVehicles",
-            "PhysicsCore"
+            "PhysicsCore",
+            "Json",
+            "JsonUtilities",
+            "CesiumRuntime"
         });
     }
 }
