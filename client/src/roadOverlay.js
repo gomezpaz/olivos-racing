@@ -80,7 +80,10 @@ export class RoadOverlay {
       this.cursor = (this.cursor + 1) % (2 * WINDOW);
       const i = (ni + this.cursor - WINDOW + n) % n;
       if (now - this.sampledAt[i] < RESAMPLE_MS) continue;
-      const gy = groundHeight(this.pts[i].x, this.pts[i].z);
+      const known = this.heights[i];
+      const neighbor = this.heights[(i - 1 + n) % n];
+      const ref = !Number.isNaN(known) ? known - LIFT : (!Number.isNaN(neighbor) ? neighbor - LIFT : null);
+      const gy = groundHeight(this.pts[i].x, this.pts[i].z, ref);
       done++;
       this.sampledAt[i] = now;
       if (gy != null) this.heights[i] = gy + LIFT;

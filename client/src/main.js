@@ -72,6 +72,14 @@ apiKeyPromise.then((k) => {
     : 'Modo mapa OSM (calles reales). Agregá una API key de Google Maps para el modo fotorrealista.';
 });
 
+// ?auto=1 skips the menu (headless visual QA); ?track= picks the circuit
+const autoParams = new URLSearchParams(location.search);
+if (autoParams.get('auto')) {
+  if (autoParams.get('track') != null) trackSelect.value = autoParams.get('track');
+  nameInput.value = autoParams.get('name') || 'QA';
+  apiKeyPromise.then(() => setTimeout(() => $('play-btn').click(), 50));
+}
+
 $('play-btn').onclick = async () => {
   const name = nameInput.value.trim() || 'Piloto';
   const room = roomInput.value.trim() || 'olivos';
@@ -80,7 +88,8 @@ $('play-btn').onclick = async () => {
   localStorage.setItem('room', room);
   localStorage.setItem('car', selectedCar);
   localStorage.setItem('trackIdx', String(trackIdx));
-  history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
+  const keep = new URLSearchParams(location.search).get('debug');
+  history.replaceState(null, '', `?room=${encodeURIComponent(room)}${keep ? '&debug=1' : ''}`);
   $('menu').classList.add('hidden');
   $('hud').classList.remove('hidden');
   startGame(name, room, selectedCar, await apiKeyPromise, trackIdx);
@@ -381,6 +390,8 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
   const clock = new THREE.Clock();
   let sendAcc = 0, cpAcc = 0, roadAcc = 0, mmAcc = 0;
   const camPos = new THREE.Vector3();
+  const camRay = new THREE.Raycaster();
+  camRay.firstHitOnly = true;
   let firstFrames = 0;
 
   function frame() {
@@ -452,7 +463,19 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     camPos.x = THREE.MathUtils.damp(camPos.x, target.x, 5, dt);
     camPos.y = THREE.MathUtils.damp(camPos.y, target.y, 5, dt);
     camPos.z = THREE.MathUtils.damp(camPos.z, target.z, 5, dt);
+    // camera collision: don't let foliage/buildings swallow the chase cam
     camera.position.copy(camPos);
+    if (tilesMode && camMode === 0) {
+      const head = new THREE.Vector3(car.pos.x, car.pos.y + 1.5, car.pos.z);
+      const toCam = new THREE.Vector3().subVectors(camPos, head);
+      const dist = toCam.length();
+      camRay.set(head, toCam.normalize());
+      camRay.far = dist;
+      const hits = camRay.intersectObject(tilesCtl.tiles.group, true);
+      if (hits.length && hits[0].distance < dist) {
+        camera.position.copy(head).addScaledVector(toCam, Math.max(hits[0].distance * 0.88, 2.2));
+      }
+    }
     camera.lookAt(car.pos.x + fwd.x * 6, car.pos.y + 1.2, car.pos.z + fwd.z * 6);
 
     // sun follows car for shadow coverage
@@ -503,7 +526,7 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     roadAcc += dt;
     if (roadOverlay && roadAcc > 0.4) {
       roadAcc = 0;
-      roadOverlay.update(car.pos, (x, z) => tilesCtl.groundHeight(x, z), now);
+      roadOverlay.update(car.pos, (x, z, ref) => tilesCtl.groundHeight(x, z, ref), now);
     }
 
     cpAcc += dt;

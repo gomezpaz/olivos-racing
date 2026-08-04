@@ -86,7 +86,7 @@ export class Car {
 
     // ground follow (smoothed so tile LOD pops don't kick the car)
     if (groundHeight) {
-      const gy = groundHeight(this.pos.x, this.pos.z);
+      const gy = groundHeight(this.pos.x, this.pos.z, this.groundY);
       if (gy != null) this.groundY = THREE.MathUtils.damp(this.groundY, gy, 12, dt);
     }
     this.pos.y = this.groundY;

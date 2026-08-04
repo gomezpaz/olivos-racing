@@ -78,14 +78,18 @@ export async function initTiles(scene, camera, renderer, origin, apiKey) {
       camera.updateMatrixWorld();
       tiles.update();
     },
-    groundHeight(x, z) {
+    groundHeight(x, z, ref = null) {
       raycaster.set(new THREE.Vector3(x, 300, z), down);
       const hits = raycaster.intersectObject(tiles.group, true);
-      // Take the lowest plausible hit: photogrammetry tree canopies hang over
-      // the road, and coarse whole-earth tiles produce km-scale garbage.
+      // With a reference height, prefer the hit closest to it (continuity —
+      // don't jump onto tree canopies or dig under coarse-LOD blobs).
+      // Without one, take the lowest plausible hit (streets sit under canopy).
       let best = null;
       for (const h of hits) {
-        if (h.point.y > -60 && h.point.y < 200 && (best == null || h.point.y < best)) best = h.point.y;
+        const y = h.point.y;
+        if (y <= -60 || y >= 200) continue;
+        if (best == null) { best = y; continue; }
+        if (ref != null ? Math.abs(y - ref) < Math.abs(best - ref) : y < best) best = y;
       }
       return best;
     },
