@@ -513,7 +513,7 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
       sun.position.copy(car.pos).addScaledVector(sunDir, 250);
       sun.target.position.copy(car.pos);
     }
-    if (atmo) atmo.update(car.pos);
+    if (atmo) atmo.update(car.pos, camera.position);
 
     if (tilesCtl) tilesCtl.update();
 

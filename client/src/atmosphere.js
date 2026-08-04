@@ -105,6 +105,12 @@ export async function initAtmosphere({ renderer, scene, camera, origin }) {
   sunLight.update();
   skyProbe.update();
 
+  // camera-following fill so backlit cars don't collapse to black —
+  // photogrammetry ignores scene lights, so this only touches game objects
+  const fill = new THREE.DirectionalLight(0xcfdcec, 1);
+  fill.castShadow = false;
+  scene.add(fill, fill.target);
+
   return {
     composer,
     sunLight,
@@ -115,9 +121,14 @@ export async function initAtmosphere({ renderer, scene, camera, origin }) {
         if (c.isMesh || c.isSprite) maskPass.selection.add(c);
       });
     },
-    update(carPos) {
+    update(carPos, cameraPos) {
       sunLight.target.position.copy(carPos);
       sunLight.update();
+      fill.intensity = sunLight.intensity * 0.16;
+      if (cameraPos) {
+        fill.position.copy(cameraPos).add(new THREE.Vector3(0, 30, 0));
+        fill.target.position.copy(carPos);
+      }
     },
     setSize(w, h) {
       composer.setSize(w, h);
