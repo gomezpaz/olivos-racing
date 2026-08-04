@@ -319,6 +319,54 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
       `<div class="p ${m.me ? 'me' : ''}"><span>${m.name}</span><span>${race.phase === 'racing' || race.phase === 'countdown' ? 'V' + (m.lap || 0) : ''}</span></div>`).join('');
   }
 
+  // ---------- minimap ----------
+  const mm = $('minimap');
+  const mmCtx = mm.getContext('2d');
+  const mmPad = 16;
+  let mmMinX = Infinity, mmMaxX = -Infinity, mmMinZ = Infinity, mmMaxZ = -Infinity;
+  for (const p of track.pts) {
+    mmMinX = Math.min(mmMinX, p.x); mmMaxX = Math.max(mmMaxX, p.x);
+    mmMinZ = Math.min(mmMinZ, p.z); mmMaxZ = Math.max(mmMaxZ, p.z);
+  }
+  const mmScale = Math.min((mm.width - mmPad * 2) / (mmMaxX - mmMinX), (mm.height - mmPad * 2) / (mmMaxZ - mmMinZ));
+  const mmX = (x) => mmPad + (x - mmMinX) * mmScale + (mm.width - mmPad * 2 - (mmMaxX - mmMinX) * mmScale) / 2;
+  const mmY = (z) => mmPad + (z - mmMinZ) * mmScale + (mm.height - mmPad * 2 - (mmMaxZ - mmMinZ) * mmScale) / 2;
+  function drawMinimap() {
+    mmCtx.clearRect(0, 0, mm.width, mm.height);
+    mmCtx.beginPath();
+    for (let i = 0; i < track.pts.length; i++) {
+      const p = track.pts[i];
+      i ? mmCtx.lineTo(mmX(p.x), mmY(p.z)) : mmCtx.moveTo(mmX(p.x), mmY(p.z));
+    }
+    mmCtx.closePath();
+    mmCtx.strokeStyle = 'rgba(255,255,255,0.75)';
+    mmCtx.lineWidth = 3;
+    mmCtx.stroke();
+    // start line
+    const s0 = track.pts[0];
+    mmCtx.fillStyle = '#f6b40e';
+    mmCtx.fillRect(mmX(s0.x) - 3, mmY(s0.z) - 3, 6, 6);
+    // next checkpoint
+    const cp = track.checkpoints[track.nextCp % track.checkpoints.length];
+    mmCtx.beginPath();
+    mmCtx.arc(mmX(cp.pos.x), mmY(cp.pos.z), 4, 0, 7);
+    mmCtx.strokeStyle = '#ffc743';
+    mmCtx.lineWidth = 2;
+    mmCtx.stroke();
+    // remote players
+    mmCtx.fillStyle = '#e66';
+    for (const r of remotes.values()) {
+      mmCtx.beginPath();
+      mmCtx.arc(mmX(r.mesh.position.x), mmY(r.mesh.position.z), 3.5, 0, 7);
+      mmCtx.fill();
+    }
+    // me
+    mmCtx.fillStyle = '#74acdf';
+    mmCtx.beginPath();
+    mmCtx.arc(mmX(car.pos.x), mmY(car.pos.z), 4.5, 0, 7);
+    mmCtx.fill();
+  }
+
   // ---------- debug overlay (?debug=1, auto-on in simulation-only mode) ----------
   const debugMode = !!new URLSearchParams(location.search).get('debug') || !renderer;
   let debugEl = null, debugAcc = 0;
@@ -331,7 +379,7 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
 
   // ---------- loop ----------
   const clock = new THREE.Clock();
-  let sendAcc = 0, cpAcc = 0, roadAcc = 0;
+  let sendAcc = 0, cpAcc = 0, roadAcc = 0, mmAcc = 0;
   const camPos = new THREE.Vector3();
   let firstFrames = 0;
 
@@ -431,8 +479,15 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     // HUD
     const kmh = Math.round(car.speed * 3.6);
     $('speedo').firstElementChild.textContent = kmh;
+    mmAcc += dt;
+    if (mmAcc > 0.12) { mmAcc = 0; drawMinimap(); }
     if (localRacing) {
-      $('race-info').innerHTML = `<div class="lap">Vuelta ${track.lap}/${track.laps}</div><div class="time">${fmtTime(now - track.raceStart)}</div>`;
+      const myProg = track.lap * 10000 + track.nextCp;
+      let rank = 1;
+      for (const m of playersMeta.values()) {
+        if ((m.lap || 0) * 10000 + (m.cp || 0) > myProg) rank++;
+      }
+      $('race-info').innerHTML = `<div class="lap">Vuelta ${track.lap}/${track.laps} · P${rank}/${playersMeta.size + 1}</div><div class="time">${fmtTime(now - track.raceStart)}</div>`;
     } else if (race.phase !== 'racing') {
       $('race-info').innerHTML = `<div class="lap">${trackData.name}</div><div class="time">${(trackData.lengthM / 1000).toFixed(1)} km · modo libre</div>`;
     }
