@@ -1,0 +1,59 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Multiplayer smoke test
+        run: |
+          PORT=4319 node server/index.js &
+          sleep 1
+          node --input-type=module -e "
+          import WebSocket from 'ws';
+          const mk = (name) => {
+            const ws = new WebSocket('ws://localhost:4319');
+            const c = { ws, msgs: [] };
+            ws.on('open', () => ws.send(JSON.stringify({ t: 'join', room: 'ci', name, car: 'sharan-2006' })));
+            ws.on('message', (d) => c.msgs.push(JSON.parse(d)));
+            return c;
+          };
+          const a = mk('A'), b = mk('B');
+          await new Promise(r => setTimeout(r, 500));
+          a.ws.send(JSON.stringify({ t: 's', d: [1,0,2,0.5,0,10] }));
+          a.ws.send(JSON.stringify({ t: 'startRace' }));
+          a.ws.send(JSON.stringify({ t: 'finish', timeMs: 61000 }));
+          b.ws.send(JSON.stringify({ t: 'finish', timeMs: 62000 }));
+          await new Promise(r => setTimeout(r, 500));
+          const welcome = b.msgs.find(m => m.t === 'welcome');
+          if (!welcome || welcome.players.length !== 1) throw new Error('join/welcome broken');
+          const race = a.msgs.filter(m => m.t === 'race').at(-1);
+          if (!race || race.race.phase !== 'finished' || race.race.results.length !== 2)
+            throw new Error('race flow broken: ' + JSON.stringify(race));
+          console.log('smoke test ok:', race.race.results.map(r => r.name + ':' + r.timeMs).join(', '));
+          process.exit(0);
+          "
+      - name: Track data sanity
+        run: |
+          python3 - <<'EOF'
+          import json, math
+          d = json.load(open('client/src/data/olivos.json'))
+          assert len(d['tracks']) >= 2, 'expected 2+ tracks'
+          kx = 111320 * math.cos(math.radians(-34.52)); ky = 110574
+          for t in d['tracks']:
+              c = t['path']
+              assert len(c) > 100, f"{t['id']}: too few points"
+              gaps = [math.hypot((a[1]-b[1])*kx, (a[0]-b[0])*ky) for a, b in zip(c, c[1:])]
+              assert max(gaps) < 20, f"{t['id']}: gap {max(gaps):.1f}m"
+              print(t['id'], 'ok:', len(c), 'pts,', t['lengthM'], 'm')
+          EOF
