@@ -90,15 +90,61 @@ def stitch_circuit(ways, names, start, lane_offsets=None):
             else:
                 merged.append([p])
         leg = [(sum(q[0] for q in g)/len(g), sum(q[1] for q in g)/len(g)) for g in merged]
+        # snap to real street segments — leg clipping/merging can cut corners
+        # diagonally through housing blocks otherwise
+        leg = snap_to_streets(leg, segments_for(ways, names))
         off = (lane_offsets or {}).get(name, 0)
         if off and len(leg) > 1:
             leg = offset_right(leg, off)
         loop.extend(leg)
-    loop = resample_smooth(loop, step=8.0, passes=3)
+    loop = resample_smooth(loop, step=8.0, passes=2)
+    # final snap: the resampler bridges leg joints in straight lines that can
+    # cut through blocks; tolerance sits above the lane offset so that survives
+    max_off = max((lane_offsets or {}).values(), default=0)
+    segs = segments_for(ways, names)
+    loop = snap_to_streets(loop, segs, tol=max_off + 3.5)
+    loop = resample_smooth(loop, step=8.0, passes=1)
+    loop = remove_backtracks(loop)
+    # end on a snap so nothing smoothing re-introduced can leave the street
+    loop = snap_to_streets(loop, segs, tol=max_off + 3.5)
     loop = remove_backtracks(loop)
     # rotate so the loop starts at the requested anchor intersection
     si = min(range(len(loop)), key=lambda i: dist(loop[i], start))
     return loop[si:] + loop[:si]
+
+_seg_cache = {}
+def segments_for(ways, names):
+    key = tuple(sorted(names))
+    if key not in _seg_cache:
+        segs = []
+        for w in ways:
+            if w.get('tags', {}).get('name') in names and 'geometry' in w:
+                g = [(q['lat'], q['lon']) for q in w['geometry']]
+                segs += list(zip(g, g[1:]))
+        _seg_cache[key] = segs
+    return _seg_cache[key]
+
+def snap_to_streets(leg, segs, tol=3.0):
+    kx = 111320 * math.cos(math.radians(-34.51)); ky = 110574
+    def project(p):
+        px, py = p[1]*kx, p[0]*ky
+        best, bd = p, 1e18
+        for a, b in segs:
+            ax, ay = a[1]*kx, a[0]*ky
+            bx, by = b[1]*kx, b[0]*ky
+            dx, dy = bx-ax, by-ay
+            t = max(0.0, min(1.0, ((px-ax)*dx + (py-ay)*dy) / (dx*dx + dy*dy or 1)))
+            qx, qy = ax + dx*t, ay + dy*t
+            dd = (px-qx)**2 + (py-qy)**2
+            if dd < bd:
+                bd = dd
+                best = ((a[0] + (b[0]-a[0])*t), (a[1] + (b[1]-a[1])*t))
+        return best, math.sqrt(bd)
+    out = []
+    for p in leg:
+        q, dist_m = project(p)
+        out.append(q if dist_m > tol else p)
+    return out
 
 def offset_right(leg, meters):
     # shift each point perpendicular-right of the direction of travel
