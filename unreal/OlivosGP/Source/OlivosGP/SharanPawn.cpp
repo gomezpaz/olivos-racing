@@ -48,6 +48,19 @@ ASharanPawn::ASharanPawn()
 void ASharanPawn::BeginPlay()
 {
     Super::BeginPlay();
+
+    // prefer the imported Sharan glb over the placeholder box
+    for (const TCHAR* Path : { TEXT("/Game/Vehicles/sharan.sharan"), TEXT("/Game/Vehicles/Sharan.Sharan") })
+    {
+        if (UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, Path))
+        {
+            Body->SetStaticMesh(Mesh);
+            Body->SetWorldScale3D(FVector(100.f)); // glTF meters -> UE cm
+            Body->SetRelativeRotation(FRotator(0.f, MeshYawOffsetDeg, 0.f));
+            break;
+        }
+    }
+
     BuildInputAssets();
 
     if (const APlayerController* PC = Cast<APlayerController>(GetController()))

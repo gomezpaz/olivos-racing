@@ -48,6 +48,9 @@ public:
     UPROPERTY(EditAnywhere, Category = "Vehicle|Tuning") float SteerHighSpeedDeg = 5.f;
     UPROPERTY(EditAnywhere, Category = "Vehicle|Tuning") float WheelBase = 280.f;      // cm
 
+    // glTF forward axis vs UE forward axis — tune in editor if the car imports sideways
+    UPROPERTY(EditAnywhere, Category = "Vehicle|Mesh") float MeshYawOffsetDeg = -90.f;
+
 protected:
     virtual void BeginPlay() override;
 

@@ -65,5 +65,24 @@ def run(api_key=None):
         unreal.PlayerStart, unreal.Vector(ue_pos.x, ue_pos.y, ue_pos.z + 150.0))
     start.set_actor_rotation(unreal.Rotator(0.0, 0.0, START["heading_deg"]), False)
 
+    import_sharan()
+
     les.save_current_level()
     unreal.log("bootstrap_olivos: level ready — /Game/Maps/Olivos")
+
+
+def import_sharan():
+    """Import SourceArt/sharan.glb (exported from the web build) as /Game/Vehicles."""
+    project_dir = unreal.SystemLibrary.get_project_directory()
+    glb = os.path.join(project_dir, "SourceArt", "sharan.glb")
+    if not os.path.exists(glb):
+        unreal.log_warning(f"bootstrap_olivos: {glb} not found — pawn keeps placeholder box")
+        return
+    task = unreal.AssetImportTask()
+    task.filename = glb
+    task.destination_path = "/Game/Vehicles"
+    task.automated = True
+    task.save = True
+    task.replace_existing = True
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+    unreal.log("bootstrap_olivos: imported sharan.glb -> /Game/Vehicles")

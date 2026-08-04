@@ -20,6 +20,28 @@ if (PROBING) {
   fetchApiKey().then((k) => probeTiles(mapData.origin, k));
 }
 
+// asset export for the Unreal build: ?export=sharan exposes a glb dump hook
+if (new URLSearchParams(location.search).get('export') === 'sharan') {
+  window.__exportSharan = async () => {
+    const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+    const { buildSharan } = await import('./cars/sharan2006.js');
+    const { group } = buildSharan({});
+    // drop the fake contact-shadow plane — UE has real shadows
+    for (const child of [...group.children]) {
+      if (child.isMesh && child.geometry?.type === 'PlaneGeometry' && child.rotation.x <= -1.55) {
+        group.remove(child);
+      }
+    }
+    const buf = await new GLTFExporter().parseAsync(group, { binary: true });
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+  };
+}
+
 // ---------- menu ----------
 if (!PROBING) {
 const nameInput = $('name-input');
