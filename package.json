@@ -11,9 +11,12 @@
     "bake": "python3 tools/bake_map.py"
   },
   "dependencies": {
+    "@takram/three-atmosphere": "^0.19.1",
+    "@takram/three-geospatial": "^0.9.1",
     "3d-tiles-renderer": "^0.4.5",
     "express": "^4.21.2",
-    "three": "^0.170.0",
+    "postprocessing": "^6.39.4",
+    "three": "^0.180.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

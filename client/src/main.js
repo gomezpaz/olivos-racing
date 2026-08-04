@@ -104,15 +104,6 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
   }
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xcfe2f3, 500, 2200);
-
-  if (renderer) {
-    // image-based lighting so car paint has real reflections
-    const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 0.55;
-  }
 
   const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.5, 6000);
   addEventListener('resize', () => {
@@ -120,28 +111,6 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     camera.updateProjectionMatrix();
     if (renderer) renderer.setSize(innerWidth, innerHeight);
   });
-
-  // late-afternoon sun over the river
-  const { Sky } = await import('three/addons/objects/Sky.js');
-  const sky = new Sky();
-  sky.scale.setScalar(45000);
-  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(62), THREE.MathUtils.degToRad(35));
-  sky.material.uniforms.turbidity.value = 6;
-  sky.material.uniforms.rayleigh.value = 1.8;
-  sky.material.uniforms.mieCoefficient.value = 0.004;
-  sky.material.uniforms.mieDirectionalG.value = 0.85;
-  sky.material.uniforms.sunPosition.value.copy(sunDir);
-  scene.add(sky);
-
-  const sun = new THREE.DirectionalLight(0xffe8c8, 3.1);
-  sun.position.copy(sunDir).multiplyScalar(250);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
-  sun.shadow.camera.left = -90; sun.shadow.camera.right = 90;
-  sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90;
-  sun.shadow.bias = -0.0004;
-  scene.add(sun, sun.target);
-  scene.add(new THREE.HemisphereLight(0xbfd7f0, 0x54503e, 0.75));
 
   const proj = makeProjector(mapData.origin);
   const trackData = mapData.tracks[Math.min(trackIdx, mapData.tracks.length - 1)];
@@ -153,13 +122,59 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     $('attribution').classList.remove('hidden');
     $('attribution').textContent = 'Map data ©2026 Google';
   }
+
+  // lighting: physically-based atmosphere in photorealistic mode,
+  // stylized sky + sun in OSM fallback (or if atmosphere init fails)
+  let atmo = null, sun = null;
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(62), THREE.MathUtils.degToRad(35));
+  if (tilesMode && renderer) {
+    try {
+      const { initAtmosphere } = await import('./atmosphere.js');
+      atmo = await initAtmosphere({ renderer, scene, camera, origin: mapData.origin });
+    } catch (e) {
+      console.error('atmosphere init failed, falling back to basic lighting', e);
+    }
+  }
+  if (!atmo) {
+    scene.fog = new THREE.Fog(0xcfe2f3, 500, 2200);
+    if (renderer) {
+      const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      scene.environmentIntensity = 0.55;
+    }
+    const { Sky } = await import('three/addons/objects/Sky.js');
+    const sky = new Sky();
+    sky.scale.setScalar(45000);
+    sky.material.uniforms.turbidity.value = 6;
+    sky.material.uniforms.rayleigh.value = 1.8;
+    sky.material.uniforms.mieCoefficient.value = 0.004;
+    sky.material.uniforms.mieDirectionalG.value = 0.85;
+    sky.material.uniforms.sunPosition.value.copy(sunDir);
+    scene.add(sky);
+    sun = new THREE.DirectionalLight(0xffe8c8, 3.1);
+    sun.position.copy(sunDir).multiplyScalar(250);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(4096, 4096);
+    sun.shadow.camera.left = -90; sun.shadow.camera.right = 90;
+    sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90;
+    sun.shadow.bias = -0.0004;
+    scene.add(sun, sun.target);
+    scene.add(new THREE.HemisphereLight(0xbfd7f0, 0x54503e, 0.75));
+  }
   const { colliders } = buildWorld(scene, mapData, proj, { tilesMode });
   const track = new Track(trackData, proj, scene);
   const dressing = buildCircuitDressing(scene, track.pts, { tilesMode });
+  if (atmo) {
+    atmo.addToMask(dressing);
+    atmo.addToMask(track.marker);
+    addEventListener('resize', () => atmo.setSize(innerWidth, innerHeight));
+  }
 
   const groundHeight = tilesMode ? (x, z) => tilesCtl.groundHeight(x, z) : () => 0;
 
   const car = new Car(carId, scene);
+  if (atmo) atmo.addToMask(car.mesh);
   const spawn = track.spawnPose(0);
   car.place(spawn.x, spawn.z, spawn.yaw);
   // photorealistic terrain streams in async — hold the car until the ground exists
@@ -232,7 +247,9 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
 
   function addRemote(id, p) {
     if (remotes.has(id) || id === net.id) return;
-    remotes.set(id, new RemoteCar(p.car, p.name, scene));
+    const rc = new RemoteCar(p.car, p.name, scene);
+    if (atmo) atmo.addToMask(rc.mesh);
+    remotes.set(id, rc);
     playersMeta.set(id, { name: p.name, car: p.car, cp: p.progress?.cp || 0, lap: p.progress?.lap || 0 });
   }
 
@@ -374,8 +391,11 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
     camera.lookAt(car.pos.x + fwd.x * 6, car.pos.y + 1.2, car.pos.z + fwd.z * 6);
 
     // sun follows car for shadow coverage
-    sun.position.copy(car.pos).addScaledVector(sunDir, 250);
-    sun.target.position.copy(car.pos);
+    if (sun) {
+      sun.position.copy(car.pos).addScaledVector(sunDir, 250);
+      sun.target.position.copy(car.pos);
+    }
+    if (atmo) atmo.update(car.pos);
 
     if (tilesCtl) tilesCtl.update();
 
@@ -422,7 +442,8 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
       }
     }
 
-    if (renderer) renderer.render(scene, camera);
+    if (atmo) atmo.composer.render(dt);
+    else if (renderer) renderer.render(scene, camera);
     else scene.updateMatrixWorld(true); // sim mode: render normally does this
   }
   frame();
