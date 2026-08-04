@@ -11,6 +11,8 @@ import { CarAudio } from './audio.js';
 import { CARS } from './cars/index.js';
 
 const $ = (id) => document.getElementById(id);
+// params captured before any history.replaceState rewrites
+const BOOT_PARAMS = new URLSearchParams(location.search);
 
 // diagnostic mode: /?probe=1 exercises tile loading without WebGL
 const PROBING = !!new URLSearchParams(location.search).get('probe');
@@ -214,7 +216,13 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
 
   const car = new Car(carId, scene);
   if (atmo) atmo.addToMask(car.mesh);
-  const spawn = track.spawnPose(0);
+  // QA: ?spawncp=N spawns at checkpoint N instead of the start line
+  const spawnCp = parseInt(BOOT_PARAMS.get('spawncp') || '-1', 10);
+  const spawn = spawnCp >= 0
+    ? { x: track.checkpoints[spawnCp % track.checkpoints.length].pos.x,
+        z: track.checkpoints[spawnCp % track.checkpoints.length].pos.z,
+        yaw: track.checkpoints[spawnCp % track.checkpoints.length].yaw }
+    : track.spawnPose(0);
   car.place(spawn.x, spawn.z, spawn.yaw);
   // photorealistic terrain streams in async — hold the car until the ground exists
   let awaitingTerrain = tilesMode;
@@ -399,7 +407,7 @@ async function startGame(playerName, room, carId, apiKey, trackIdx = 0) {
   }
 
   // ---------- debug overlay (?debug=1, auto-on in simulation-only mode) ----------
-  const debugMode = !!new URLSearchParams(location.search).get('debug') || !renderer;
+  const debugMode = !!BOOT_PARAMS.get('debug') || !renderer;
   let debugEl = null, debugAcc = 0;
   if (debugMode) {
     debugEl = document.createElement('div');
